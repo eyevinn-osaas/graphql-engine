@@ -1,45 +1,49 @@
-# Hasura GraphQL Engine on Eyevinn Open Source Cloud
+# Eyevinn Open Source Cloud
 
-This fork adds OSC containerization artifacts to [Hasura GraphQL Engine](https://github.com/hasura/graphql-engine), enabling it to run on the [Eyevinn Open Source Cloud](https://www.osaas.io) platform.
+## Turn Your Open Source Project into a Revenue Stream
 
-## What is Hasura?
+Welcome to [Eyevinn Open Source Cloud](https://www.osaas.io) - the platform that democratizes infrastructure and creates sustainable revenue for open source creators.
 
-Hasura GraphQL Engine is a blazing-fast GraphQL server that gives you instant, realtime GraphQL APIs over PostgreSQL and other databases, with fine-grained access control and webhook-based event triggers.
+### Why Eyevinn Open Source Cloud Benefits You as a Creator
 
-## OSC Artifacts
+**🚀 Zero Infrastructure Costs**  
+Your users get enterprise-grade hosting and scaling without you managing servers, paying hosting bills, or dealing with DevOps complexity. We handle the infrastructure so you can focus on what you do best - building great software.
 
-- `Dockerfile.osc` — Docker image based on the official `hasura/graphql-engine` image
-- `osc-entrypoint.sh` — Entrypoint script that maps OSC platform variables to Hasura configuration
+**💰 Monetize Your Open Source Work**  
+Finally get paid for your contributions to the open source ecosystem. When users deploy your project through our platform, you automatically receive a share of the revenue. No complicated pricing models or payment processing required.
 
-## Required Environment Variables
+**📈 Reach More Users**  
+Remove the biggest barrier to adoption - deployment complexity. Your project becomes instantly accessible to non-technical users and small teams who need your solution but lack the resources for self-hosting.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `HASURA_GRAPHQL_METADATA_DATABASE_URL` | PostgreSQL connection string for Hasura metadata storage | Yes |
-| `HASURA_GRAPHQL_ADMIN_SECRET` | Secret key to secure the admin API and console | Yes |
-| `HASURA_GRAPHQL_ENABLE_CONSOLE` | Enable the Hasura web console (default: `true`) | No |
+**🎯 Level the Playing Field**  
+Small and medium projects now have access to the same infrastructure capabilities as big tech companies. Your innovative tool can compete on features, not on who has the biggest infrastructure budget.
 
-## OSC Platform Mapping
+### How It Works
 
-| OSC Variable | Mapped To | Description |
-|--------------|-----------|-------------|
-| `PORT` | `HASURA_GRAPHQL_SERVER_PORT` | HTTP port to bind to |
-| `OSC_HOSTNAME` | `HASURA_GRAPHQL_CORS_DOMAIN` | Public hostname for CORS configuration |
+1. **Claim Ownership**: Create your account on [osaas.io](https://www.osaas.io) and connect your GitHub account
+2. **Automatic Recognition**: We verify your ownership of this repository
+3. **Instant Revenue**: Start earning from every deployment of your project
+4. **Focus on Code**: Continue developing while we handle scaling, security, and operations
 
-## Quick Start
+### For Your Users
 
-```bash
-docker run -p 8080:8080 \
-  -e HASURA_GRAPHQL_METADATA_DATABASE_URL="postgres://user:password@host:5432/dbname" \
-  -e HASURA_GRAPHQL_ADMIN_SECRET="your-secret" \
-  -e PORT=8080 \
-  osc-graphql-engine:dev graphql-engine serve
-```
+Users pay only for what they use, getting professional-grade hosting without the complexity. They can deploy your project in minutes instead of hours or days, making your solution accessible to a broader audience.
 
-## Original Project
+### Community & Support
 
-See [hasura/graphql-engine](https://github.com/hasura/graphql-engine) for full documentation, changelog, and contribution guidelines.
+Join our vibrant community of open source creators:
 
-## License
+- **💬 [Slack Workspace](https://slack.osaas.io)** - Connect with other creators, get help, and share your experiences
+- **🐙 [GitHub](https://github.com/EyevinnOSC)** - Contribute to the platform and follow development updates  
+- **💼 [LinkedIn](https://www.linkedin.com/company/eyevinn-open-source-cloud/)** - Stay updated with news and announcements
+- **📚 [Documentation](https://docs.osaas.io)** - User guides and best practices
 
-Apache-2.0 — see [LICENSE](LICENSE)
+### Join the Movement
+
+Help us democratize access to open source infrastructure and create a sustainable ecosystem where creators are rewarded for their contributions.
+
+**[Get Started →](https://www.osaas.io)**
+
+---
+
+*Eyevinn Open Source Cloud - Making open source more accessible, one deployment at a time.*

@@ -1,3 +1,9 @@
+# Eyevinn Open Source Cloud - Processing History
+
+## Changelog
+
+- **2026-03-18T13:01:44.751Z**: Project synchronized with upstream by OSaaS Service Builder
+
 # OSC Changelog
 
 All OSC-specific changes to the Hasura GraphQL Engine fork are documented here.
