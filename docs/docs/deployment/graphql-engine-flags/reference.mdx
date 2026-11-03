@@ -112,6 +112,37 @@ A [secret key](/deployment/securing-graphql-endpoint.mdx) required to access the
 :::info Note
 
 When you use [webhook or JWT mode for authentication](/auth/authentication/index.mdx), setting this value is mandatory.
+This requirement does not apply when `HASURA_GRAPHQL_DISABLE_ADMIN_SECRET=true`.
+
+:::
+
+### Disable Admin Secret
+
+Authentication via the `x-hasura-admin-secret` request header is disabled.
+
+|                     |                                       |
+| ------------------- | ------------------------------------- |
+| **Flag**            | `--disable-admin-secret`              |
+| **Env var**         | `HASURA_GRAPHQL_DISABLE_ADMIN_SECRET` |
+| **Accepted values** | Boolean                               |
+| **Options**         | `true` or `false`                     |
+| **Default**         | `false`                               |
+| **Supported in**    | CE and Enterprise Edition             |
+
+When enabled in CE, configure `HASURA_GRAPHQL_AUTH_HOOK`, `HASURA_GRAPHQL_JWT_SECRET`, or
+`HASURA_GRAPHQL_UNAUTHORIZED_ROLE`. In self-hosted Enterprise Edition, you can also configure
+`HASURA_GRAPHQL_JWT_SECRETS` or `HASURA_GRAPHQL_SSO_PROVIDERS`.
+
+If neither JWT nor an auth hook is configured, requests fall back to `HASURA_GRAPHQL_UNAUTHORIZED_ROLE` when it is set.
+The role is fixed: request headers cannot override it or grant admin-secret or backend-only access. Without an
+unauthorized role, requests that are not authenticated by another configured method are rejected. The unauthorized role
+cannot be `admin` when the admin secret is disabled.
+
+:::warning CE console and metadata APIs
+
+The CE Console cannot authenticate when admin-secret authentication is disabled. For CE deployments, set
+`HASURA_GRAPHQL_ENABLE_CONSOLE=false` and `HASURA_GRAPHQL_ENABLED_APIS=graphql` unless you intentionally expose another
+API configuration.
 
 :::
 
@@ -299,7 +330,6 @@ List of domains, **including scheme (http/https) and port**, to allow for CORS.
 important **limitations**:
 
 1. **Wildcard for subdomains**:
-
    - Wildcards (`*`) can indicate **only a single subdomain position** and must be the **starting subdomain**.
      - Example: `http://*.foo.com` will match `http://app.foo.com` but **not** `http://www.app.foo.com`.
      - Similarly, `http://www.*.foo.com` will **not** handle `http://www.app.foo.com`.
@@ -355,6 +385,21 @@ Used to set the default [naming convention](/schema/postgres/naming-convention.m
 | **Options**         | `hasura-default` or `graphql-default`      |
 | **Default**         | `hasura-default`                           |
 | **Supported in**    | CE, Enterprise Edition, Cloud              |
+
+### Enable Naming Convention Sep 2023 feature flag
+
+By default, even when `graphql-default` is selected, the following names keep using `hasura-default`-style (snake_case)
+casing, to preserve backward compatibility with schemas generated before September 2023. Enable this flag to opt in to
+the full `graphql-default`. The flag also applies a source's type name prefix and suffix to the input types of
+aggregation predicates, whatever the naming convention.
+
+|                     |                                        |
+| ------------------- | -------------------------------------- |
+| **Env var**         | `HASURA_FF_NAMING_CONVENTION_SEP_2023` |
+| **Accepted values** | Boolean                                |
+| **Options**         | `true` or `false`                      |
+| **Default**         | `false`                                |
+| **Supported in**    | CE, Enterprise Edition, Cloud          |
 
 ### Disable CORS
 
@@ -463,6 +508,48 @@ Sets the log-level as `error` for Trigger type error logs (Event Triggers, Sched
 | **Default**         | `false`                                          |
 | **Supported in**    | CE, Enterprise Edition                           |
 
+### Redact Event Trigger Logs
+
+When enabled, redacts the request body, session variables and webhook response body from the **Event Trigger**
+(`event-trigger`) logs. The webhook URL and sensitive/from-env headers are always redacted regardless of this flag.
+Redacted fields are emitted as `null`. Enable this to avoid leaking sensitive payload data into `stdout` logs when a
+webhook delivery fails (for example, when re-enabling event-trigger error logging in `stdout`).
+
+|                     |                                            |
+| ------------------- | ------------------------------------------ |
+| **Flag**            | `--redact-event-trigger-logs`              |
+| **Env var**         | `HASURA_GRAPHQL_REDACT_EVENT_TRIGGER_LOGS` |
+| **Accepted values** | Boolean                                    |
+| **Default**         | `false`                                    |
+| **Supported in**    | CE, Enterprise Edition                     |
+
+### Redact Scheduled Trigger Logs
+
+When enabled, redacts the request body, session variables and webhook response body from the **Scheduled/Cron Trigger**
+(`scheduled-trigger`) logs (covers cron and one-off scheduled events). Redacted fields are emitted as `null`.
+
+|                     |                                                |
+| ------------------- | ---------------------------------------------- |
+| **Flag**            | `--redact-scheduled-trigger-logs`              |
+| **Env var**         | `HASURA_GRAPHQL_REDACT_SCHEDULED_TRIGGER_LOGS` |
+| **Accepted values** | Boolean                                        |
+| **Default**         | `false`                                        |
+| **Supported in**    | CE, Enterprise Edition                         |
+
+### Redact Action Handler Logs
+
+When enabled, redacts the request body (of both the original and the transformed request) from the **Action handler**
+(`action-handler-log`) logs. The request size, response size and action metadata are always retained. Redacted fields
+are emitted as `null`.
+
+|                     |                                             |
+| ------------------- | ------------------------------------------- |
+| **Flag**            | `--redact-action-handler-logs`              |
+| **Env var**         | `HASURA_GRAPHQL_REDACT_ACTION_HANDLER_LOGS` |
+| **Accepted values** | Boolean                                     |
+| **Default**         | `false`                                     |
+| **Supported in**    | CE, Enterprise Edition                      |
+
 ### Enable Console
 
 Enable the Hasura Console (served by the server on `/` and `/console`).
@@ -558,6 +645,20 @@ Enable [RBAC for Remote Schemas](/remote-schemas/auth/remote-schema-permissions.
 | **Options**         | `true` or `false`                                    |
 | **Default**         | `false`                                              |
 | **Supported in**    | CE, Enterprise Edition, Cloud                        |
+
+### Enable Relay
+
+Enable the Relay API endpoint (`/v1/relay` and `/v1beta1/relay`). When disabled, requests to the relay endpoint return
+an error with instructions to enable it. Disabling this reduces memory usage for deployments that do not use Relay.
+
+|                     |                               |
+| ------------------- | ----------------------------- |
+| **Flag**            | `--enable-relay`              |
+| **Env var**         | `HASURA_GRAPHQL_ENABLE_RELAY` |
+| **Accepted values** | Boolean                       |
+| **Options**         | `true` or `false`             |
+| **Default**         | `true`                        |
+| **Supported in**    | CE, Enterprise Edition, Cloud |
 
 ### Enable Telemetry
 
@@ -894,9 +995,8 @@ connections until a new connection becomes available, even if there is capacity 
 
 :::warning Notice
 
-In versions > `v2.0.0` this affects only connections to the postgres database used for the metadata catalog.
-The equivalent setting for data sources is now `connection_info > pool_settings > connection_lifetime` in the
-metadata.
+In versions > `v2.0.0` this affects only connections to the postgres database used for the metadata catalog. The
+equivalent setting for data sources is now `connection_info > pool_settings > connection_lifetime` in the metadata.
 
 :::
 
@@ -962,16 +1062,18 @@ Each connection's idle time, measured in seconds, before it's closed.
 
 ### Preserve 401 Errors
 
-Preserves HTTP 401 (Unauthorized) status codes from webhook auth responses and JWT auth failures. By default, all GraphQL errors are returned with HTTP status code 200, even authentication errors. When enabled, 401 errors will be propagated back to the client.
+Preserves HTTP 401 (Unauthorized) status codes from webhook auth responses and JWT auth failures. By default, all
+GraphQL errors are returned with HTTP status code 200, even authentication errors. When enabled, 401 errors will be
+propagated back to the client.
 
-|                     |                                                  |
-| ------------------- | ------------------------------------------------ |
-| **Flag**            | `--preserve-401-errors`                          |
-| **Env var**         | `HASURA_GRAPHQL_PRESERVE_401_ERRORS`             |
-| **Accepted values** | Boolean                                          |
-| **Options**         | `true` or `false`                                |
-| **Default**         | `false`                                          |
-| **Supported in**    | CE, Enterprise Edition                           |
+|                     |                                      |
+| ------------------- | ------------------------------------ |
+| **Flag**            | `--preserve-401-errors`              |
+| **Env var**         | `HASURA_GRAPHQL_PRESERVE_401_ERRORS` |
+| **Accepted values** | Boolean                              |
+| **Options**         | `true` or `false`                    |
+| **Default**         | `false`                              |
+| **Supported in**    | CE, Enterprise Edition               |
 
 ### Query Plan Cache Size
 
@@ -1103,19 +1205,22 @@ The path to a shared CA store to use to connect to both (caching and rate-limiti
 
 ### Caching Redis Pool Size
 
-Maximum number of connections in the caching Redis connection pool. For high-traffic production environments, you may want to increase this value. For development or low-traffic environments, you can decrease it to conserve resources.
+Maximum number of connections in the caching Redis connection pool. For high-traffic production environments, you may
+want to increase this value. For development or low-traffic environments, you can decrease it to conserve resources.
 
-|                     |                                             |
-| ------------------- | ------------------------------------------- |
-| **Flag**            | `--caching-redis-pool-size`                 |
-| **Env var**         | `HASURA_GRAPHQL_CACHING_REDIS_POOL_SIZE`    |
-| **Accepted values** | Integer                                     |
-| **Default**         | `500`                                       |
-| **Supported in**    | Enterprise Edition only                     |
+|                     |                                          |
+| ------------------- | ---------------------------------------- |
+| **Flag**            | `--caching-redis-pool-size`              |
+| **Env var**         | `HASURA_GRAPHQL_CACHING_REDIS_POOL_SIZE` |
+| **Accepted values** | Integer                                  |
+| **Default**         | `500`                                    |
+| **Supported in**    | Enterprise Edition only                  |
 
 ### Rate Limit Redis Pool Size
 
-Maximum number of connections in the rate-limiting Redis connection pool. For high-traffic production environments with heavy rate-limiting usage, you may want to increase this value. For development or low-traffic environments, you can decrease it to conserve resources.
+Maximum number of connections in the rate-limiting Redis connection pool. For high-traffic production environments with
+heavy rate-limiting usage, you may want to increase this value. For development or low-traffic environments, you can
+decrease it to conserve resources.
 
 |                     |                                             |
 | ------------------- | ------------------------------------------- |
@@ -1138,6 +1243,23 @@ The Redis URL to use for [query caching](/caching/enterprise-caching.mdx) and
 | **Default**         | `null`                                   |
 | **Example**         | `redis://username:password@host:port/db` |
 | **Supported in**    | Enterprise Edition only                  |
+
+### Remote Schema Healing Interval
+
+The interval, in milliseconds, at which to check for Remote Schemas that are inconsistent (for example because they
+were unreachable when the server started) and retry introspecting them. Once a Remote Schema can be introspected
+again, it is automatically reloaded, without needing to call
+[`reload_remote_schema`](/api-reference/metadata-api/remote-schemas.mdx#metadata-reload-remote-schema). Each failing
+Remote Schema is retried with exponential backoff, starting at this interval and up to a maximum of 2 minutes. To
+disable, set this value to `0`.
+
+|                     |                                                     |
+| ------------------- | --------------------------------------------------- |
+| **Flag**            | `--remote-schema-healing-interval <INTERVAL_IN_MS>` |
+| **Env var**         | `HASURA_GRAPHQL_REMOTE_SCHEMA_HEALING_INTERVAL`     |
+| **Accepted values** | Integer (Representing an interval in milliseconds)  |
+| **Default**         | `5000`                                              |
+| **Supported in**    | CE, Enterprise Edition                              |
 
 ### Remote Schema prioritize data
 
@@ -1327,7 +1449,9 @@ Add SQL and GraphQL queries to the OTLP traces.
 ### Unauthorized Role
 
 This identifies an [unauthorized role](/auth/authentication/unauthenticated-access.mdx), used when the
-`x-hasura-admin-key` is not sent or the `Authorization` header is absent in JWT mode.
+`x-hasura-admin-key` is not sent or the `Authorization` header is absent in JWT mode. When
+`HASURA_GRAPHQL_DISABLE_ADMIN_SECRET=true` and neither JWT nor an auth hook is configured, requests use this role
+regardless of any admin-secret or role headers.
 
 |                     |                                                                                                                                   |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
@@ -1397,6 +1521,62 @@ Used to set the connection initialization timeout for GraphQL subscription proto
 | **Default**         | `3`                                                        |
 | **Supported in**    | CE, Enterprise Edition                                     |
 
+### Websocket Queue Size
+
+Sets the maximum number of subscription-result and query-result messages buffered per WebSocket connection. The
+primary purpose is to bound memory usage when a subscriber is slow to consume messages — without a limit, a stalled
+or slow client can cause unbounded memory growth on the server as results accumulate.
+
+Unlike a simple bounded buffer, nothing already queued is ever silently dropped to make room for newer messages. When
+the queue is at capacity, a new result for an operation isn't enqueued at all: that operation is stopped instead, and
+the client receives an explicit `error` followed by a `complete` telling it to retry (a one-shot query or mutation)
+or resubscribe (a live query or streaming subscription). This applies uniformly to every operation kind, including
+live queries: it's only correct to skip a live query's update when a _newer_ one supersedes it. If the connection
+stayed overloaded indefinitely, a subscriber could otherwise be stuck on stale data forever with no indication
+anything was wrong — resubscribing re-fetches the current state immediately, so nothing is permanently missed.
+
+Control/signal messages (completions, errors, connection acks, pongs) are never subject to this limit — they always
+succeed, so the queue's true depth can exceed this setting slightly under sustained overcapacity, bounded by however
+many operations are concurrently being stopped this way, not unbounded.
+
+The `hasura_websocket_messages_dropped_total` Prometheus metric counts how many times a data message couldn't be
+enqueued this way; pairing it with `hasura_websocket_messages_queued_total` gives the drop rate as a fraction of
+total sends.
+
+**Interaction with poll interval:** A slow subscriber is most likely to overflow the queue when the subscription poll
+interval is short relative to the client's consumption rate. If you lower
+`HASURA_GRAPHQL_LIVE_QUERIES_MULTIPLEXED_REFETCH_INTERVAL`, consider whether clients can keep up, and tune this queue
+size accordingly.
+
+**Streaming subscriptions:** Streaming queries present results as an ordered sequence of elements and rely on
+cursor-based pagination to make progress, so the error a client receives on overcapacity also includes, in its
+`extensions.resume_cursor` field, the cursor value to resubscribe with in order to resume from exactly where it left
+off — no data is skipped or duplicated. Streaming subscriptions require the `streaming_subscriptions` experimental
+feature flag:
+
+    {
+      "errors": [
+        {
+          "message": "This operation's result could not be delivered because the connection's send queue was at capacity, so it has been stopped. Please retry, using this cursor as the initial_value to resume from exactly where results were lost: {\"TrackId\":\"1328\"}.",
+          "extensions": {
+            "code": "unexpected",
+            "path": "$",
+            "resume_cursor": {
+              "TrackId": "1328"
+            }
+          }
+        }
+      ]
+    }
+
+|                     |                                 |
+| ------------------- | ------------------------------- |
+| **Flag**            | `--websocket-queue-size <SIZE>` |
+| **Env var**         | `HASURA_GRAPHQL_WEBSOCKET_QUEUE_SIZE` |
+| **Accepted values** | Integer (must be at least `1`) |
+| **Default**         | `300`                           |
+| **Supported in**    | CE, Enterprise Edition, Cloud   |
+
 ### Websocket Keepalive
 
 Used to set the `Keep Alive` delay for clients that use the `subscriptions-transport-ws` (Apollo) protocol. For
@@ -1423,5 +1603,16 @@ disabled. **This can be a potential security flaw!** This configuration is only 
 | **Default**         | `false`                            |
 | **Options**         | `true` or `false`                  |
 | **Supported in**    | CE, Enterprise Edition             |
+
+### Masked request variables in query-log
+
+Sets a list of variable names to be masked in query logs.
+
+|                     |                                       |
+| ------------------- | ------------------------------------- |
+| **Flag**            | `--log-masked-variables`              |
+| **Env var**         | `HASURA_GRAPHQL_LOG_MASKED_VARIABLES` |
+| **Accepted values** | String (Comma-separated list)         |
+| **Supported in**    | CE, Enterprise Edition                |
 
 </div>

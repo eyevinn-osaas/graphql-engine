@@ -65,7 +65,7 @@ import Hasura.RQL.Types.Subscription
 import Hasura.SQL.AnyBackend qualified as AB
 import Hasura.Server.Init qualified as Init
 import Hasura.Server.Prometheus (PrometheusMetrics)
-import Hasura.Server.Types (HeaderPrecedence, MonadGetPolicies, ReadOnlyMode (..), RequestId (..), TraceQueryStatus)
+import Hasura.Server.Types (HeaderPrecedence, MonadGetPolicies, ReadOnlyMode (..), RedactActionHandlerLogsStatus, RequestId (..), TraceQueryStatus)
 import Hasura.Services
 import Hasura.Tracing qualified as Tracing
 import Language.GraphQL.Draft.Syntax qualified as G
@@ -245,7 +245,7 @@ buildSubscriptionPlan removeEmptySubscriptionResponses userInfo rootFields param
               case JO.asObject oldResponse of
                 Left (_err :: String) -> oldResponse
                 Right responseObj ->
-                  JO.Object $ JO.insert (fieldIndex, G.unName $ _rfaAlias gName) val responseObj
+                  JO.Object $ JO.insert (fieldIndex, G.unName $ _rfaAlias gName) (JO.toOrdered (IR.irEncJSON val)) responseObj
         pure ((accLiveQueryFields, accStreamingFields), Just (Endo newModifier) <> modifier)
       IR.RFMulti _ -> throw400 NotSupported "not supported over subscriptions"
       IR.RFDB src e -> do
@@ -368,6 +368,7 @@ getResolvedExecPlan ::
   RequestId ->
   Init.ResponseInternalErrorsConfig ->
   HeaderPrecedence ->
+  RedactActionHandlerLogsStatus ->
   TraceQueryStatus ->
   m (ParameterizedQueryHash, ResolvedExecutionPlan, [ModelInfoPart])
 getResolvedExecPlan
@@ -386,6 +387,7 @@ getResolvedExecPlan
   reqId
   responseErrorsConfig
   headerPrecedence
+  redactActionHandlerLogs
   traceQueryStatus = do
     let gCtx = makeGQLContext userInfo sc queryType
         tracesPropagator = getOtelTracesPropagator $ scOpenTelemetryConfig sc
@@ -414,6 +416,7 @@ getResolvedExecPlan
               maybeOperationName
               responseErrorsConfig
               headerPrecedence
+              redactActionHandlerLogs
               traceQueryStatus
           Tracing.attachMetadata [("graphql.operation.type", "query"), ("parameterized_query_hash", bsToTxt $ unParamQueryHash parameterizedQueryHash)]
           pure (parameterizedQueryHash, QueryExecutionPlan executionPlan queryRootFields dirMap, modelInfoList)
@@ -439,6 +442,7 @@ getResolvedExecPlan
               maybeOperationName
               includeInternalErrors
               headerPrecedence
+              redactActionHandlerLogs
               traceQueryStatus
           Tracing.attachMetadata [("graphql.operation.type", "mutation")]
           pure (parameterizedQueryHash, MutationExecutionPlan executionPlan, modelInfoList)

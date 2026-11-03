@@ -193,10 +193,8 @@ common common-all
       -- This is for performance, and works in combination with '-fspecialise-aggressively'
       -- in the graphql-engine 'executable' stanza below, and in any other dependent
       -- executables (See mono #2610):
-      -fexpose-all-unfoldings
+      -fexpose-overloaded-unfoldings
       -O2
-      -- This is lowered to limit compile time and binary size (default 80)
-      -funfolding-use-threshold=40
   else
     -- we just want to build fast:
     ghc-options: -O0
@@ -644,6 +642,7 @@ library
                      -- GraphQL Data Connector
                      , Hasura.Backends.DataConnector.Adapter.API
                      , Hasura.Backends.DataConnector.Adapter.Backend
+                     , Hasura.Backends.DataConnector.Adapter.ColumnValues
                      , Hasura.Backends.DataConnector.Adapter.Execute
                      , Hasura.Backends.DataConnector.Adapter.ConfigTransform
                      , Hasura.Backends.DataConnector.Adapter.RunSQL
@@ -692,7 +691,6 @@ library
                      , Hasura.Server.Init.Arg.PrettyPrinter
                      , Hasura.Server.Init.Config
                      , Hasura.Server.Init.Env
-                     , Hasura.Server.Init.FeatureFlag
                      , Hasura.Server.Init.Logging
                      , Hasura.Server.Limits
                      , Hasura.Server.Logging
@@ -789,6 +787,7 @@ library
                      , Hasura.Server.CheckUpdates
                      , Hasura.Server.AppStateRef
                      , Hasura.Server.SchemaUpdate
+                     , Hasura.Server.RemoteSchemaHealing
                      , Hasura.Server.Migrate.LatestVersion
                      , Hasura.Server.Migrate.Version
                      , Hasura.Server.Migrate.Internal
@@ -1058,6 +1057,7 @@ executable graphql-engine
     ghc-options:
       -- This is for performance (See mono #2610):
       -fspecialise-aggressively
+      -fpolymorphic-specialisation
 
   hs-source-dirs:    src-exec
   main-is:           Main.hs
@@ -1143,6 +1143,7 @@ test-suite graphql-engine-tests
     , monad-control
     , mtl
     , network-uri
+    , odbc
     , openapi3
     , optparse-applicative
     , pg-client
@@ -1194,6 +1195,7 @@ test-suite graphql-engine-tests
     Hasura.Base.Error.TestInstances
     Hasura.Backends.BigQuery.SourceSpec
     Hasura.Backends.BigQuery.TypesSpec
+    Hasura.Backends.DataConnector.Adapter.MetadataSpec
     Hasura.Backends.DataConnector.Adapter.TypesSpec
     Hasura.Backends.DataConnector.API.V0.AggregateSpec
     Hasura.Backends.DataConnector.API.V0.CapabilitiesSpec
@@ -1209,6 +1211,7 @@ test-suite graphql-engine-tests
     Hasura.Backends.DataConnector.API.V0.SchemaSpec
     Hasura.Backends.DataConnector.API.V0.TableSpec
     Hasura.Backends.DataConnector.API.V0.TargetSpec
+    Hasura.Backends.MSSQL.FromIr.QuerySpec
     Hasura.Backends.Postgres.Connection.VersionCheckSpec
     Hasura.Backends.Postgres.Execute.PrepareSpec
     Hasura.Backends.Postgres.NativeQueries.NativeQueriesSpec
@@ -1223,12 +1226,14 @@ test-suite graphql-engine-tests
     Hasura.Backends.Postgres.SQL.Select.RenameIdentifiersSpec
     Hasura.Backends.Postgres.SQL.SplitSQLSpec
     Hasura.Backends.Postgres.SQL.ValueSpec
+    Hasura.Backends.Postgres.TableMetadataSpec
     Hasura.Backends.Postgres.Translate.DeleteSpec
     Hasura.Backends.Postgres.Translate.InsertSpec
     Hasura.Backends.Postgres.Translate.UpdateSpec
     Hasura.EncJSONSpec
     Hasura.EventingSpec
     Hasura.Generator.Common
+    Hasura.GraphQL.Logging.QueryLogSpec
     Hasura.GraphQL.NamespaceSpec
     Hasura.GraphQL.Schema.BoolExp.AggregationPredicatesSpec
     Hasura.GraphQL.Schema.Build.UpdateSpec
@@ -1236,6 +1241,7 @@ test-suite graphql-engine-tests
     Hasura.GraphQL.Schema.RemoteSpec
     Hasura.Metadata.DTO.MetadataDTOSpec
     Hasura.QuickCheck.Instances
+    Hasura.RQL.DDL.CustomTypesSpec
     Hasura.RQL.DDL.Webhook.TransformSpec
     Hasura.RQL.IR.Generator
     Hasura.RQL.IR.SelectSpec
@@ -1253,6 +1259,7 @@ test-suite graphql-engine-tests
     Hasura.Server.InitSpec
     Hasura.Server.Init.ArgSpec
     Hasura.Server.Migrate.VersionSpec
+    Hasura.Server.RemoteSchemaHealingSpec
     Hasura.Server.TelemetrySpec
     Hasura.Server.VersionSpec
     Hasura.Server.InitSpec
@@ -1292,6 +1299,7 @@ test-suite graphql-engine-test-mssql
   other-modules:
     Database.MSSQL.TransactionSpec
     Hasura.Backends.MSSQL.ErrorSpec
+    Hasura.Backends.MSSQL.EventTriggerCleanupSuite
     SpecHook
 
 test-suite graphql-engine-test-postgres

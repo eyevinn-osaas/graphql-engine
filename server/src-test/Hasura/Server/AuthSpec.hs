@@ -20,11 +20,12 @@ import Data.CaseInsensitive qualified as CI
 import Data.Either (isRight)
 import Data.HashMap.Strict qualified as HashMap
 import Data.HashSet qualified as Set
+import Data.List qualified as L
 import Data.Parser.JSONPath
 import Data.Text qualified as T
-import Hasura.Authentication.Role (RoleName, adminRoleName, mkRoleName)
+import Hasura.Authentication.Role (RoleName, adminRoleName, mkRoleName, roleNameToTxt)
 import Hasura.Authentication.Session
-import Hasura.Authentication.User (UserAdminSecret (..), UserInfo (..), UserRoleBuild (..), mkUserInfo)
+import Hasura.Authentication.User (BackendOnlyFieldAccess (..), UserAdminSecret (..), UserInfo (..), UserRoleBuild (..), mkUserInfo)
 import Hasura.Base.Error
 import Hasura.GraphQL.Transport.HTTP.Protocol (ReqsText)
 import Hasura.Logging (Logger (..))
@@ -40,6 +41,7 @@ spec :: Spec
 spec = do
   getUserInfoWithExpTimeTests
   setupAuthModeTests
+  authScenarioMatrixTests
   parseClaimsMapTests
   parseCognitoJwksTests
   filterOutUnknownKeyTypesTests
@@ -61,11 +63,10 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
         [HTTP.Header] ->
         AuthMode ->
         Maybe ReqsText ->
-        IO (Either Code RoleName)
+        IO (Either Code UserInfo)
       gqlUserInfoWithExpTime claims rawHeaders authMode =
         runExceptT
           . withExceptT qeCode -- just look at Code for purposes of tests
-          . fmap _uiRole -- just look at RoleName for purposes of tests
           . fmap (view _1) -- disregard Nothing expiration
           . getUserInfoWithExpTime_ userInfoFromAuthHook processJwt () () rawHeaders authMode
         where
@@ -87,7 +88,8 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
         [HTTP.Header] ->
         AuthMode ->
         IO (Either Code RoleName)
-      getUserInfoWithExpTime o claims authMode = gqlUserInfoWithExpTime o claims authMode Nothing
+      getUserInfoWithExpTime o claims authMode =
+        fmap (fmap _uiRole) $ gqlUserInfoWithExpTime o claims authMode Nothing
 
   let ourUnauthRole = mkRoleNameE "an0nymous"
 
@@ -119,12 +121,9 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
           `shouldReturn` Left AccessDenied
         getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader adminSecretHeader "blah"] mode
           `shouldReturn` Left AccessDenied
-        -- with deprecated header:
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader "bad secret"] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader ""] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader deprecatedAccessKeyHeader "blah"] mode
+        -- x-hasura-access-key is no longer accepted; even the correct admin secret
+        -- via the deprecated header is treated as no credential sent.
+        getUserInfoWithExpTime mempty [("x-hasura-access-key", "secret")] mode
           `shouldReturn` Left AccessDenied
 
       it "rejects when no secret sent, since no fallback unauth role" $ do
@@ -157,13 +156,10 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
           `shouldReturn` Left AccessDenied
         getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader adminSecretHeader "blah"] mode
           `shouldReturn` Left AccessDenied
-        -- with deprecated header:
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader "bad secret"] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader ""] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader deprecatedAccessKeyHeader "blah"] mode
-          `shouldReturn` Left AccessDenied
+        -- x-hasura-access-key is no longer accepted; the correct admin secret via
+        -- the deprecated header is not recognized as admin, falling to the unauth role.
+        getUserInfoWithExpTime mempty [("x-hasura-access-key", "secret")] mode
+          `shouldReturn` Right ourUnauthRole
 
       it "accepts when no secret sent and unauth role defined" $ do
         getUserInfoWithExpTime mempty mempty mode
@@ -193,13 +189,6 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
       getUserInfoWithExpTime mempty [sessionVariableToHeader adminSecretHeader ""] mode
         `shouldReturn` Left AccessDenied
       getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader adminSecretHeader "blah"] mode
-        `shouldReturn` Left AccessDenied
-      -- with deprecated header:
-      getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader "bad secret"] mode
-        `shouldReturn` Left AccessDenied
-      getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader ""] mode
-        `shouldReturn` Left AccessDenied
-      getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader deprecatedAccessKeyHeader "blah"] mode
         `shouldReturn` Left AccessDenied
 
     it "authenticates with webhook when no admin secret sent" $ do
@@ -242,13 +231,10 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
           `shouldReturn` Left AccessDenied
         getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader adminSecretHeader "blah"] mode
           `shouldReturn` Left AccessDenied
-        -- with deprecated header:
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader "bad secret"] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader ""] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader deprecatedAccessKeyHeader "blah"] mode
-          `shouldReturn` Left AccessDenied
+        -- x-hasura-access-key is no longer accepted; the correct admin secret via
+        -- the deprecated header is not recognized, treated as no credential sent.
+        getUserInfoWithExpTime mempty [("x-hasura-access-key", "secret")] mode
+          `shouldReturn` Left InvalidHeaders
 
       it "rejects when admin secret not sent and no 'Authorization' header" $ do
         getUserInfoWithExpTime mempty [("blah", "blah")] mode
@@ -281,13 +267,10 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
           `shouldReturn` Left AccessDenied
         getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader adminSecretHeader "blah"] mode
           `shouldReturn` Left AccessDenied
-        -- with deprecated header:
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader "bad secret"] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [sessionVariableToHeader deprecatedAccessKeyHeader ""] mode
-          `shouldReturn` Left AccessDenied
-        getUserInfoWithExpTime mempty [("blah", "blah"), sessionVariableToHeader deprecatedAccessKeyHeader "blah"] mode
-          `shouldReturn` Left AccessDenied
+        -- x-hasura-access-key is no longer accepted; the correct admin secret via
+        -- the deprecated header is not recognized as admin, falling to the unauth role.
+        getUserInfoWithExpTime mempty [("x-hasura-access-key", "secret")] mode
+          `shouldReturn` Right ourUnauthRole
 
       it "authorizes as unauth role when no 'Authorization' header" $ do
         getUserInfoWithExpTime mempty [("blah", "blah")] mode
@@ -355,6 +338,186 @@ getUserInfoWithExpTimeTests = describe "getUserInfo" $ do
               getUserInfoWithExpTime claim [("Authorization", "Bearer IGNORED")] mode
                 `shouldReturn` Left JWTRoleClaimMissing
 
+  -- With --disable-admin-secret and no webhook or JWT, only the configured
+  -- unauthorized role can be used, regardless of any headers sent.
+  describe "admin secret disabled, no webhook or JWT (AMUnauthentication)" $ do
+    forM_ [(Nothing, "without a configured admin secret"), (Just $ Set.singleton $ hashAdminSecret "secret", "with a configured admin secret")]
+      $ \(adminSecret, modeMsg) -> describe modeMsg $ do
+        describe "unauth role NOT set" $ do
+          mode <- runIO $ setupAuthModeDisableAdminSecretE adminSecret Nothing mempty Nothing
+
+          it "always rejects, even with an admin secret or role header" $ do
+            for_ [mempty, [sessionVariableToHeader adminSecretHeader "secret"], [sessionVariableToHeader userRoleHeader "admin"]] $ \headers ->
+              getUserInfoWithExpTime mempty headers mode
+                `shouldReturn` Left AccessDenied
+
+        describe "unauth role set" $ do
+          mode <- runIO $ setupAuthModeDisableAdminSecretE adminSecret Nothing mempty (Just ourUnauthRole)
+
+          it "uses the unauthorized role even with admin secret, role or authorization headers" $ do
+            for_
+              [ mempty,
+                [sessionVariableToHeader adminSecretHeader "secret"],
+                [sessionVariableToHeader adminSecretHeader "bad secret"],
+                [sessionVariableToHeader userRoleHeader "admin"],
+                [sessionVariableToHeader userRoleHeader "r00t"],
+                [("Authorization", "Bearer IGNORED")]
+              ]
+              $ \headers ->
+                getUserInfoWithExpTime mempty headers mode
+                  `shouldReturn` Right ourUnauthRole
+
+          it "preserves session variables without granting backend-only access or leaking the admin secret" $ do
+            let headers =
+                  [ sessionVariableToHeader adminSecretHeader "secret",
+                    sessionVariableToHeader userRoleHeader "admin",
+                    sessionVariableToHeader useBackendOnlyPermissionsHeader "true",
+                    ("x-hasura-user-id", "42")
+                  ]
+            gqlUserInfoWithExpTime mempty headers mode Nothing >>= \case
+              Left code -> expectationFailure $ show code
+              Right userInfo -> do
+                _uiRole userInfo `shouldBe` ourUnauthRole
+                _uiBackendOnlyFieldAccess userInfo `shouldBe` BOFADisallowed
+                getSessionVariableValue userRoleHeader (_uiSession userInfo) `shouldBe` Just "an0nymous"
+                getSessionVariableValue adminSecretHeader (_uiSession userInfo) `shouldBe` Nothing
+                getSessionVariableValue (unsafeMkSessionVariable ("x-hasura-user-id" :: CI.CI Text)) (_uiSession userInfo) `shouldBe` Just "42"
+
+  -- With --disable-admin-secret and a webhook configured, the admin secret
+  -- header is never consulted; webhook auth applies unconditionally.
+  describe "admin secret disabled, webhook only (AMHook)" $ do
+    mode <- runIO $ setupAuthModeDisableAdminSecretE Nothing (Just fakeAuthHook) mempty Nothing
+
+    it "authenticates with webhook regardless of any admin secret header sent" $ do
+      getUserInfoWithExpTime mempty mempty mode
+        `shouldReturn` Right (mkRoleNameE "hook")
+      getUserInfoWithExpTime mempty [sessionVariableToHeader adminSecretHeader "secret"] mode
+        `shouldReturn` Right (mkRoleNameE "hook")
+      getUserInfoWithExpTime mempty [sessionVariableToHeader adminSecretHeader "bad secret"] mode
+        `shouldReturn` Right (mkRoleNameE "hook")
+
+  -- With --disable-admin-secret and JWT configured, the admin secret header
+  -- is never consulted; JWT auth applies unconditionally.
+  describe "admin secret disabled, JWT only (AMJWT)" $ do
+    describe "unauth role NOT set" $ do
+      mode <- runIO $ setupAuthModeDisableAdminSecretE Nothing Nothing [fakeJWTConfig] Nothing
+
+      it "ignores any admin secret header and requires a JWT" $ do
+        getUserInfoWithExpTime mempty [sessionVariableToHeader adminSecretHeader "secret"] mode
+          `shouldReturn` Left InvalidHeaders
+        getUserInfoWithExpTime mempty mempty mode
+          `shouldReturn` Left InvalidHeaders
+
+      it "authorizes successfully with JWT when requested role allowed" $ do
+        let claim =
+              unObject
+                [ allowedRolesClaimText .= (["editor", "user", "mod"] :: [Text]),
+                  defaultRoleClaimText .= ("user" :: Text)
+                ]
+        getUserInfoWithExpTime claim [("Authorization", "Bearer IGNORED")] mode
+          `shouldReturn` Right (mkRoleNameE "user")
+
+    describe "unauth role set" $ do
+      mode <- runIO $ setupAuthModeDisableAdminSecretE Nothing Nothing [fakeJWTConfig] (Just ourUnauthRole)
+
+      it "ignores any admin secret header, falling back to unauth role without a JWT" $ do
+        getUserInfoWithExpTime mempty [sessionVariableToHeader adminSecretHeader "secret"] mode
+          `shouldReturn` Right ourUnauthRole
+        getUserInfoWithExpTime mempty mempty mode
+          `shouldReturn` Right ourUnauthRole
+
+  -- Every request variant against every configuration that starts, using the
+  -- scenario IDs from 'authScenarioMatrixTests'. Webhook and JWT verification
+  -- are mocked: the hook always answers role "hook", and any JWT carries the
+  -- claims below. Each cell records the resolved role and whether
+  -- backend-only permissions are available, or the error code.
+  describe "auth scenario matrix (request resolution)" $ do
+    let mxSecret = Set.singleton $ hashAdminSecret "secret"
+        mxAnon = mkRoleNameE "anon"
+        mxUser = mkRoleNameE "user"
+        mxHook = mkRoleNameE "hook"
+        mxR00t = mkRoleNameE "r00t"
+        mxClaims =
+          unObject
+            [ allowedRolesClaimText .= (["user", "editor"] :: [Text]),
+              defaultRoleClaimText .= ("user" :: Text)
+            ]
+        mxSecretHeader = sessionVariableToHeader adminSecretHeader "secret"
+        mxBearer = ("Authorization", "Bearer IGNORED") :: HTTP.Header
+        mxBackendOnlyHeader = sessionVariableToHeader useBackendOnlyPermissionsHeader "true"
+        mxRequests :: [(String, [HTTP.Header])]
+        mxRequests =
+          [ ("no auth headers", []),
+            ("correct admin secret", [mxSecretHeader]),
+            ("wrong admin secret", [sessionVariableToHeader adminSecretHeader "wrong"]),
+            ("x-hasura-role: admin", [sessionVariableToHeader userRoleHeader "admin"]),
+            ("correct admin secret + x-hasura-role: r00t", [mxSecretHeader, sessionVariableToHeader userRoleHeader "r00t"]),
+            ("JWT", [mxBearer]),
+            ("JWT + x-hasura-role: admin", [mxBearer, sessionVariableToHeader userRoleHeader "admin"]),
+            ("backend-only header", [mxBackendOnlyHeader]),
+            ("correct admin secret + backend-only header", [mxSecretHeader, mxBackendOnlyHeader])
+          ]
+        mxOk :: RoleName -> Either Code (RoleName, BackendOnlyFieldAccess)
+        mxOk r = Right (r, BOFADisallowed)
+        mxOkBackendOnly :: RoleName -> Either Code (RoleName, BackendOnlyFieldAccess)
+        mxOkBackendOnly r = Right (r, BOFAAllowed)
+        mxDenied :: Either Code (RoleName, BackendOnlyFieldAccess)
+        mxDenied = Left AccessDenied
+        mxNoToken :: Either Code (RoleName, BackendOnlyFieldAccess)
+        mxNoToken = Left InvalidHeaders
+        mxEverything :: Either Code (RoleName, BackendOnlyFieldAccess) -> [Either Code (RoleName, BackendOnlyFieldAccess)]
+        mxEverything r = map (const r) mxRequests
+        mxScenarios :: [(String, IO AuthMode, [Either Code (RoleName, BackendOnlyFieldAccess)])]
+        mxScenarios =
+          [ ( "A1: nothing set",
+              setupAuthMode'E Nothing Nothing mempty Nothing,
+              [mxOk adminRoleName, mxOk adminRoleName, mxOk adminRoleName, mxOk adminRoleName, mxOk mxR00t, mxOk adminRoleName, mxOk adminRoleName, mxOkBackendOnly adminRoleName, mxOkBackendOnly adminRoleName]
+            ),
+            ( "A3: admin secret",
+              setupAuthMode'E (Just mxSecret) Nothing mempty Nothing,
+              [mxDenied, mxOk adminRoleName, mxDenied, mxDenied, mxOk mxR00t, mxDenied, mxDenied, mxDenied, mxOkBackendOnly adminRoleName]
+            ),
+            ( "A4: admin secret + unauthorized role",
+              setupAuthMode'E (Just mxSecret) Nothing mempty (Just mxAnon),
+              [mxOk mxAnon, mxOk adminRoleName, mxDenied, mxOk mxAnon, mxOk mxR00t, mxOk mxAnon, mxOk mxAnon, mxOk mxAnon, mxOkBackendOnly adminRoleName]
+            ),
+            ( "A5: admin secret + JWT + unauthorized role",
+              setupAuthMode'E (Just mxSecret) Nothing [fakeJWTConfig] (Just mxAnon),
+              [mxOk mxAnon, mxOk adminRoleName, mxDenied, mxOk mxAnon, mxOk mxR00t, mxOk mxUser, mxDenied, mxOk mxAnon, mxOkBackendOnly adminRoleName]
+            ),
+            ( "A6: admin secret + auth hook",
+              setupAuthMode'E (Just mxSecret) (Just fakeAuthHook) mempty Nothing,
+              [mxOk mxHook, mxOk adminRoleName, mxDenied, mxOk mxHook, mxOk mxR00t, mxOk mxHook, mxOk mxHook, mxOk mxHook, mxOkBackendOnly adminRoleName]
+            ),
+            ( "B2: admin secret disabled + unauthorized role",
+              setupAuthModeDisableAdminSecretE (Just mxSecret) Nothing mempty (Just mxAnon),
+              mxEverything (mxOk mxAnon)
+            ),
+            ( "B4: admin secret disabled + JWT",
+              setupAuthModeDisableAdminSecretE (Just mxSecret) Nothing [fakeJWTConfig] Nothing,
+              [mxNoToken, mxNoToken, mxNoToken, mxNoToken, mxNoToken, mxOk mxUser, mxDenied, mxNoToken, mxNoToken]
+            ),
+            ( "B5: admin secret disabled + JWT + unauthorized role",
+              setupAuthModeDisableAdminSecretE (Just mxSecret) Nothing [fakeJWTConfig] (Just mxAnon),
+              [mxOk mxAnon, mxOk mxAnon, mxOk mxAnon, mxOk mxAnon, mxOk mxAnon, mxOk mxUser, mxDenied, mxOk mxAnon, mxOk mxAnon]
+            ),
+            ( "B7: admin secret disabled + auth hook",
+              setupAuthModeDisableAdminSecretE (Just mxSecret) (Just fakeAuthHook) mempty Nothing,
+              mxEverything (mxOk mxHook)
+            ),
+            ( "B8: admin secret disabled + auth hook + unauthorized role (ignored)",
+              setupAuthModeDisableAdminSecretE (Just mxSecret) (Just fakeAuthHook) mempty (Just mxAnon),
+              mxEverything (mxOk mxHook)
+            )
+          ]
+    for_ mxScenarios $ \(mxLabel, mxMkMode, mxExpected) -> describe mxLabel $ do
+      mxMode <- runIO mxMkMode
+      it "has an expectation for every request" $ length mxExpected `shouldBe` length mxRequests
+      for_ (zip mxRequests mxExpected) $ \((mxRequestLabel, mxHeaders), mxWant) ->
+        it mxRequestLabel $ do
+          mxGot <- gqlUserInfoWithExpTime mxClaims mxHeaders mxMode Nothing
+          fmap (\ui -> (_uiRole ui, _uiBackendOnlyFieldAccess ui)) mxGot `shouldBe` mxWant
+
 -- (*) FIXME NOTE (re above):
 --
 -- Ideally we should always return AccessDenied if the role we would
@@ -378,54 +541,189 @@ setupAuthModeTests = describe "setupAuthMode" $ do
 
   -- These are all various error cases, except for the AMNoAuth mode:
   it "with no admin secret provided" $ do
-    setupAuthMode' Nothing Nothing mempty Nothing
+    setupAuthMode' Nothing Nothing mempty Nothing False
       `shouldReturn` Right AMNoAuth
     -- We insist on an admin secret in order to use webhook or JWT auth:
-    setupAuthMode' Nothing Nothing [fakeJWTConfig] Nothing
+    setupAuthMode' Nothing Nothing [fakeJWTConfig] Nothing False
       `shouldReturn` Left ()
-    setupAuthMode' Nothing (Just fakeAuthHook) mempty Nothing
+    setupAuthMode' Nothing (Just fakeAuthHook) mempty Nothing False
       `shouldReturn` Left ()
     -- ...and we can't have both:
-    setupAuthMode' Nothing (Just fakeAuthHook) [fakeJWTConfig] Nothing
+    setupAuthMode' Nothing (Just fakeAuthHook) [fakeJWTConfig] Nothing False
       `shouldReturn` Left ()
     -- If the unauthenticated role was set but would otherwise be ignored this
     -- should be an error (for now), since users might expect all access to use
     -- the specified role. This first case would be the real worrying one:
-    setupAuthMode' Nothing Nothing mempty (Just unauthRole)
+    setupAuthMode' Nothing Nothing mempty (Just unauthRole) False
       `shouldReturn` Left ()
-    setupAuthMode' Nothing Nothing [fakeJWTConfig] (Just unauthRole)
+    setupAuthMode' Nothing Nothing [fakeJWTConfig] (Just unauthRole) False
       `shouldReturn` Left ()
-    setupAuthMode' Nothing (Just fakeAuthHook) mempty (Just unauthRole)
+    setupAuthMode' Nothing (Just fakeAuthHook) mempty (Just unauthRole) False
       `shouldReturn` Left ()
-    setupAuthMode' Nothing (Just fakeAuthHook) [fakeJWTConfig] (Just unauthRole)
+    setupAuthMode' Nothing (Just fakeAuthHook) [fakeJWTConfig] (Just unauthRole) False
       `shouldReturn` Left ()
 
   it "with admin secret provided" $ do
-    setupAuthMode' (Just secret) Nothing mempty Nothing
+    setupAuthMode' (Just secret) Nothing mempty Nothing False
       `shouldReturn` Right (AMAdminSecret secret Nothing)
-    setupAuthMode' (Just secret) Nothing mempty (Just unauthRole)
+    setupAuthMode' (Just secret) Nothing mempty (Just unauthRole) False
       `shouldReturn` Right (AMAdminSecret secret $ Just unauthRole)
 
-    setupAuthMode' (Just secret) Nothing [fakeJWTConfig] Nothing >>= \case
+    setupAuthMode' (Just secret) Nothing [fakeJWTConfig] Nothing False >>= \case
       Right (AMAdminSecretAndJWT s _ Nothing) -> do
         s `shouldBe` secret
       _ -> expectationFailure "AMAdminSecretAndJWT"
-    setupAuthMode' (Just secret) Nothing [fakeJWTConfig] (Just unauthRole) >>= \case
+    setupAuthMode' (Just secret) Nothing [fakeJWTConfig] (Just unauthRole) False >>= \case
       Right (AMAdminSecretAndJWT s _ ur) -> do
         s `shouldBe` secret
         ur `shouldBe` Just unauthRole
       _ -> expectationFailure "AMAdminSecretAndJWT"
 
-    setupAuthMode' (Just secret) (Just fakeAuthHook) mempty Nothing
+    setupAuthMode' (Just secret) (Just fakeAuthHook) mempty Nothing False
       `shouldReturn` Right (AMAdminSecretAndHook secret fakeAuthHook)
     -- auth hook can't make use of unauthenticated role for now (no good UX):
-    setupAuthMode' (Just secret) (Just fakeAuthHook) mempty (Just unauthRole)
+    setupAuthMode' (Just secret) (Just fakeAuthHook) mempty (Just unauthRole) False
       `shouldReturn` Left ()
     -- we can't have both:
-    setupAuthMode' (Just secret) (Just fakeAuthHook) [fakeJWTConfig] Nothing
+    setupAuthMode' (Just secret) (Just fakeAuthHook) [fakeJWTConfig] Nothing False
       `shouldReturn` Left ()
-    setupAuthMode' (Just secret) (Just fakeAuthHook) [fakeJWTConfig] (Just unauthRole)
+    setupAuthMode' (Just secret) (Just fakeAuthHook) [fakeJWTConfig] (Just unauthRole) False
       `shouldReturn` Left ()
+
+  -- With disableAdminSecret, the admin secret is ignored in favor of webhook,
+  -- JWT or the unauthorized role. Without any fallback, requests are rejected.
+  describe "with admin secret disabled" $ do
+    it "rejects all requests when neither webhook, JWT nor unauthorized role is configured" $ do
+      setupAuthMode' Nothing Nothing mempty Nothing True
+        `shouldReturn` Right (AMUnauthentication Nothing)
+      -- admin secret, if provided, is simply ignored:
+      setupAuthMode' (Just secret) Nothing mempty Nothing True
+        `shouldReturn` Right (AMUnauthentication Nothing)
+
+    it "rejects admin as the unauthorized role" $ do
+      setupAuthMode' Nothing Nothing mempty (Just adminRoleName) True
+        `shouldReturn` Left ()
+      setupAuthMode' (Just secret) Nothing mempty (Just adminRoleName) True
+        `shouldReturn` Left ()
+      setupAuthMode' Nothing Nothing [fakeJWTConfig] (Just adminRoleName) True
+        `shouldReturn` Left ()
+      -- unchanged when admin-secret authentication is enabled:
+      setupAuthMode' (Just secret) Nothing mempty (Just adminRoleName) False
+        `shouldReturn` Right (AMAdminSecret secret $ Just adminRoleName)
+
+    it "uses the unauthorized role without webhook or JWT, ignoring any configured admin secret" $ do
+      setupAuthMode' Nothing Nothing mempty (Just unauthRole) True
+        `shouldReturn` Right (AMUnauthentication $ Just unauthRole)
+      setupAuthMode' (Just secret) Nothing mempty (Just unauthRole) True
+        `shouldReturn` Right (AMUnauthentication $ Just unauthRole)
+
+    it "uses webhook only, ignoring any configured admin secret or unauthorized role" $ do
+      setupAuthMode' Nothing (Just fakeAuthHook) mempty Nothing True
+        `shouldReturn` Right (AMHook fakeAuthHook)
+      setupAuthMode' (Just secret) (Just fakeAuthHook) mempty Nothing True
+        `shouldReturn` Right (AMHook fakeAuthHook)
+      setupAuthMode' (Just secret) (Just fakeAuthHook) mempty (Just unauthRole) True
+        `shouldReturn` Right (AMHook fakeAuthHook)
+
+    it "uses JWT only, ignoring any configured admin secret" $ do
+      setupAuthMode' Nothing Nothing [fakeJWTConfig] Nothing True >>= \case
+        Right (AMJWT _ Nothing) -> pure ()
+        _ -> expectationFailure "AMJWT"
+      setupAuthMode' (Just secret) Nothing [fakeJWTConfig] (Just unauthRole) True >>= \case
+        Right (AMJWT _ ur) -> ur `shouldBe` Just unauthRole
+        _ -> expectationFailure "AMJWT"
+
+    it "still can't have both webhook and JWT" $ do
+      setupAuthMode' Nothing (Just fakeAuthHook) [fakeJWTConfig] Nothing True
+        `shouldReturn` Left ()
+      setupAuthMode' (Just secret) (Just fakeAuthHook) [fakeJWTConfig] Nothing True
+        `shouldReturn` Left ()
+
+-- | The auth mode 'setupAuthMode' selects for each startup configuration.
+data ExpectedAuthMode
+  = ExpectNoAuth
+  | ExpectUnauthentication (Maybe RoleName)
+  | ExpectHook
+  | ExpectJWT (Maybe RoleName)
+  | ExpectAdminSecret (Maybe RoleName)
+  | ExpectAdminSecretAndHook
+  | ExpectAdminSecretAndJWT (Maybe RoleName)
+  | ExpectStartupError
+  deriving (Eq, Show)
+
+classifyAuthMode :: Either () AuthMode -> ExpectedAuthMode
+classifyAuthMode = \case
+  Left () -> ExpectStartupError
+  Right AMNoAuth -> ExpectNoAuth
+  Right (AMUnauthentication unauthRole) -> ExpectUnauthentication unauthRole
+  Right (AMHook _) -> ExpectHook
+  Right (AMJWT _ unauthRole) -> ExpectJWT unauthRole
+  Right (AMAdminSecret _ unauthRole) -> ExpectAdminSecret unauthRole
+  Right (AMAdminSecretAndHook _ _) -> ExpectAdminSecretAndHook
+  Right (AMAdminSecretAndJWT _ _ unauthRole) -> ExpectAdminSecretAndJWT unauthRole
+
+-- | The auth scenario matrix: scenario ID and expected auth mode for a
+-- configuration given as (admin secret set, auth hook set, JWT set,
+-- unauthorized role, admin secret disabled). A1-A7 have admin-secret
+-- authentication enabled; B1-B10 set HASURA_GRAPHQL_DISABLE_ADMIN_SECRET.
+expectedAuthMode :: Bool -> Bool -> Bool -> Maybe RoleName -> Bool -> (String, ExpectedAuthMode)
+expectedAuthMode withSecret withHook withJwt unauthRole adminSecretDisabled
+  | adminSecretDisabled = disabledScenario
+  | otherwise = enabledScenario
+  where
+    unauthIsAdmin = unauthRole == Just adminRoleName
+    enabledScenario
+      | withHook && withJwt = ("A7", ExpectStartupError)
+      | not withSecret && (withHook || withJwt) = ("A7", ExpectStartupError)
+      | not withSecret = case unauthRole of
+          Nothing -> ("A1", ExpectNoAuth)
+          Just _ -> ("A2", ExpectStartupError)
+      | withJwt = ("A5", ExpectAdminSecretAndJWT unauthRole)
+      | withHook = ("A6", bool ExpectAdminSecretAndHook ExpectStartupError (isJust unauthRole))
+      | otherwise = (bool "A3" "A4" (isJust unauthRole), ExpectAdminSecret unauthRole)
+    disabledScenario
+      | withHook && withJwt = ("B10", ExpectStartupError)
+      | withHook && unauthIsAdmin = ("B9", ExpectStartupError)
+      | withHook = (bool "B7" "B8" (isJust unauthRole), ExpectHook)
+      | withJwt && unauthIsAdmin = ("B6", ExpectStartupError)
+      | withJwt = (bool "B4" "B5" (isJust unauthRole), ExpectJWT unauthRole)
+      | unauthIsAdmin = ("B3", ExpectStartupError)
+      | otherwise = (bool "B1" "B2" (isJust unauthRole), ExpectUnauthentication unauthRole)
+
+describeAuthConfig :: Bool -> Bool -> Bool -> Maybe RoleName -> Bool -> String
+describeAuthConfig withSecret withHook withJwt unauthRole adminSecretDisabled =
+  if null configFlags then "nothing set" else L.intercalate " + " configFlags
+  where
+    configFlags =
+      ["admin secret" | withSecret]
+        <> ["auth hook" | withHook]
+        <> ["JWT" | withJwt]
+        <> ["unauthorized role " <> T.unpack (roleNameToTxt r) | Just r <- [unauthRole]]
+        <> ["admin secret disabled" | adminSecretDisabled]
+
+-- | Every combination of the auth-related server options, checked against
+-- 'expectedAuthMode'. This covers 'setupAuthMode'; the startup guards in
+-- 'Hasura.App' and 'HasuraPro.App' are covered by
+-- server/tests-py/test_auth_scenarios.py.
+authScenarioMatrixTests :: Spec
+authScenarioMatrixTests = describe "auth scenario matrix (setupAuthMode)" $ do
+  let matrixSecret = Set.singleton $ hashAdminSecret "secret"
+      matrixAnon = mkRoleNameE "anon"
+  for_ [False, True] $ \adminSecretDisabled ->
+    for_ [False, True] $ \withSecret ->
+      for_ [False, True] $ \withHook ->
+        for_ [False, True] $ \withJwt ->
+          for_ [Nothing, Just matrixAnon, Just adminRoleName] $ \unauthRole -> do
+            let (scenarioId, expected) = expectedAuthMode withSecret withHook withJwt unauthRole adminSecretDisabled
+            it (scenarioId <> ": " <> describeAuthConfig withSecret withHook withJwt unauthRole adminSecretDisabled) $ do
+              result <-
+                setupAuthMode'
+                  (bool Nothing (Just matrixSecret) withSecret)
+                  (bool Nothing (Just fakeAuthHook) withHook)
+                  (bool [] [fakeJWTConfig] withJwt)
+                  unauthRole
+                  adminSecretDisabled
+              classifyAuthMode result `shouldBe` expected
 
 parseClaimsMapTests :: Spec
 parseClaimsMapTests = describe "parseClaimMapTests" $ do
@@ -617,6 +915,7 @@ fakeJWTConfig =
       jcClaims = JCNamespace (ClaimNs "") JCFJson
       jcAllowedSkew = Nothing
       jcHeader = Nothing
+      jcExtraRequiredClaims = []
    in JWTConfig {..}
 
 fakeAuthHook :: AuthHook
@@ -636,8 +935,9 @@ setupAuthMode' ::
   Maybe AuthHook ->
   [JWTConfig] ->
   Maybe RoleName ->
+  Bool ->
   m (Either () AuthMode)
-setupAuthMode' mAdminSecretHash mWebHook jwtSecrets mUnAuthRole = do
+setupAuthMode' mAdminSecretHash mWebHook jwtSecrets mUnAuthRole disableAdminSecret = do
   httpManager <- liftIO $ HTTP.newManager HTTP.defaultManagerSettings
   fmap (mapLeft $ const ())
     $ runExceptT
@@ -646,6 +946,7 @@ setupAuthMode' mAdminSecretHash mWebHook jwtSecrets mUnAuthRole = do
       mWebHook
       jwtSecrets
       mUnAuthRole
+      disableAdminSecret
       (Logger $ void . return)
       httpManager
 
@@ -660,7 +961,21 @@ setupAuthMode'E ::
   m AuthMode
 setupAuthMode'E a b c d =
   either (const $ error "fixme") id
-    <$> setupAuthMode' a b c d
+    <$> setupAuthMode' a b c d False
+
+-- | Like 'setupAuthMode'E' but allows setting @disableAdminSecret@.
+setupAuthModeDisableAdminSecretE ::
+  ( ForkableMonadIO m,
+    MonadMask m
+  ) =>
+  Maybe (HashSet AdminSecretHash) ->
+  Maybe AuthHook ->
+  [JWTConfig] ->
+  Maybe RoleName ->
+  m AuthMode
+setupAuthModeDisableAdminSecretE a b c d =
+  either (const $ error "fixme") id
+    <$> setupAuthMode' a b c d True
 
 mkClaimsSetWithUnregisteredClaims :: J.Object -> JWT.ClaimsSet
 mkClaimsSetWithUnregisteredClaims unregisteredClaims =

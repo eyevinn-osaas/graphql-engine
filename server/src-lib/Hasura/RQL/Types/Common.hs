@@ -306,7 +306,8 @@ data SQLGenCtx = SQLGenCtx
     removeEmptySubscriptionResponses :: Options.RemoveEmptySubscriptionResponses,
     remoteNullForwardingPolicy :: Options.RemoteNullForwardingPolicy,
     optimizePermissionFilters :: Options.OptimizePermissionFilters,
-    bigqueryStringNumericInput :: Options.BigQueryStringNumericInput
+    bigqueryStringNumericInput :: Options.BigQueryStringNumericInput,
+    namingConventionSep2023 :: Options.NamingConventionSep2023
   }
   deriving (Show, Eq)
 
@@ -702,7 +703,7 @@ instance (NFData a) => NFData (EnvRecord a)
 
 instance (Hashable a) => Hashable (EnvRecord a)
 
-instance (ToJSON a) => ToJSON (EnvRecord a) where
+instance ToJSON (EnvRecord a) where
   toJSON (EnvRecord envVar _envValue) = object ["env_var" .= envVar]
 
 instance (FromJSON a) => FromJSON (EnvRecord a)

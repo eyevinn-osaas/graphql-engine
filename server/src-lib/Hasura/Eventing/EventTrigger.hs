@@ -194,11 +194,8 @@ saveLockedEventTriggerEvents :: (MonadIO m) => SourceName -> [EventId] -> TVar (
 saveLockedEventTriggerEvents sourceName eventIds lockedEvents =
   liftIO
     $ atomically
-    $ do
-      lockedEventsVals <- readTVar lockedEvents
-      case HashMap.lookup sourceName lockedEventsVals of
-        Nothing -> writeTVar lockedEvents $! HashMap.singleton sourceName (Set.fromList eventIds)
-        Just _ -> writeTVar lockedEvents $! HashMap.insertWith Set.union sourceName (Set.fromList eventIds) lockedEventsVals
+    $ modifyTVar' lockedEvents
+    $ HashMap.insertWith Set.union sourceName (Set.fromList eventIds)
 
 removeEventTriggerEventFromLockedEvents ::
   (MonadIO m) => SourceName -> EventId -> TVar (HashMap SourceName (Set.Set EventId)) -> m ()
@@ -207,7 +204,12 @@ removeEventTriggerEventFromLockedEvents sourceName eventId lockedEvents =
     $ atomically
     $ do
       lockedEventsVals <- readTVar lockedEvents
-      writeTVar lockedEvents $! HashMap.adjust (Set.delete eventId) sourceName lockedEventsVals
+      -- delete eventId from set, maintaining no-empty-sets invariant
+      writeTVar lockedEvents $! HashMap.update deleteEventIdNE sourceName lockedEventsVals
+  where
+    deleteEventIdNE s =
+      let sDeleted = Set.delete eventId s
+       in sDeleted <$ guard (not $ null sDeleted)
 
 type BackendEventWithSource = AB.AnyBackend EventWithSource
 
@@ -313,8 +315,9 @@ processEventQueue ::
   EventTriggerMetrics ->
   MaintenanceMode () ->
   TriggersErrorLogLevelStatus ->
+  RedactEventTriggerLogsStatus ->
   m (Forever m)
-processEventQueue logger statsLogger httpMgr getSchemaCache getEventEngineCtx activeEventProcessingThreads LockedEventsCtx {leEvents} serverMetrics eventTriggerMetrics maintenanceMode triggersErrorLogLevelStatus = do
+processEventQueue logger statsLogger httpMgr getSchemaCache getEventEngineCtx activeEventProcessingThreads LockedEventsCtx {leEvents} serverMetrics eventTriggerMetrics maintenanceMode triggersErrorLogLevelStatus redactEventTriggerLogs = do
   events0 <- popEventsBatch
   return $ Forever (events0, 0, False) go
   where
@@ -580,7 +583,7 @@ processEventQueue logger statsLogger httpMgr getSchemaCache getEventEngineCtx ac
                           let request = extractRequest reqDetails
                               tracesPropagator = getOtelTracesPropagator $ scOpenTelemetryConfig cache
                               logger' res details = do
-                                logHTTPForET res extraLogCtx details (_envVarName webhook) logHeaders triggersErrorLogLevelStatus
+                                logHTTPForET res extraLogCtx details (_envVarName webhook) logHeaders triggersErrorLogLevelStatus redactEventTriggerLogs
                                 liftIO $ do
                                   case res of
                                     Left _err -> pure ()
@@ -770,6 +773,9 @@ retryOrSetError e retryConf eventTriggerMetrics err = do
           (eventProcessedTotal eventTriggerMetrics)
           (EventStatusWithTriggerLabel eventFailedLabel (Just (DynamicEventTriggerLabel (tmName (eTrigger e)) (eSource e))))
       pure PESetError
+    -- TODO: the webhook setting Retry-After can indefinitely bypass our retry limit mechanism.
+    -- I find our docs ambiguous ("the event will be delivered once more") as to correct behavior.
+    -- This might be causing problems for people AND be something we can no longer change.
     else do
       currentTime <- liftIO getCurrentTime
       let delay = fromMaybe (rcIntervalSec retryConf) mretryHeaderSeconds

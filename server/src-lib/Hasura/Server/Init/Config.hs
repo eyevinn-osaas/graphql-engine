@@ -41,11 +41,14 @@ module Hasura.Server.Init.Config
     isConsoleEnabled,
     AdminInternalErrorsStatus (..),
     isAdminInternalErrorsEnabled,
+    enabledWebSocketCompressionOptions,
     isWebSocketCompressionEnabled,
     AllowListStatus (..),
     isAllowListEnabled,
     DevModeStatus (..),
     isDevModeEnabled,
+    RelayModeStatus (..),
+    isRelayEnabled,
     TelemetryStatus (..),
     isTelemetryEnabled,
     WsReadCookieStatus (..),
@@ -289,6 +292,7 @@ data ServeOptionsRaw impl = ServeOptionsRaw
     rsoUnAuthRole :: Maybe RoleName,
     rsoCorsConfig :: Maybe Cors.CorsConfig,
     rsoConsoleStatus :: ConsoleStatus,
+    rsoDisableAdminSecret :: Bool,
     rsoConsoleAssetsDir :: Maybe Text,
     rsoConsoleSentryDsn :: Maybe Text,
     rsoEnableTelemetry :: Maybe TelemetryStatus,
@@ -316,12 +320,15 @@ data ServeOptionsRaw impl = ServeOptionsRaw
     rsoWebSocketKeepAlive :: Maybe KeepAliveDelay,
     rsoInferFunctionPermissions :: Maybe Schema.Options.InferFunctionPermissions,
     rsoEnableMaintenanceMode :: Server.Types.MaintenanceMode (),
+    rsoEventingMode :: Server.Types.EventingMode,
+    rsoEventProcessingMode :: Server.Types.EventProcessingMode,
     rsoSchemaPollInterval :: Maybe OptionalInterval,
     -- | See Note '$experimentalFeatures' at bottom of module
     rsoExperimentalFeatures :: Maybe (HashSet Server.Types.ExperimentalFeature),
     rsoEventsFetchBatchSize :: Maybe (Refined NonNegative Int),
     rsoGracefulShutdownTimeout :: Maybe (Refined NonNegative Seconds),
     rsoWebSocketConnectionInitTimeout :: Maybe WSConnectionInitTimeout,
+    rsoWebSocketQueueSize :: Maybe (Refined Positive Int),
     rsoEnableMetadataQueryLoggingEnv :: Server.Logging.MetadataQueryLoggingMode,
     rsoHttpLogQueryOnlyOnError :: Server.Logging.HttpLogQueryOnlyOnError,
     -- | stores global default naming convention
@@ -332,6 +339,9 @@ data ServeOptionsRaw impl = ServeOptionsRaw
     rsoCloseWebsocketsOnMetadataChangeStatus :: Maybe Server.Types.CloseWebsocketsOnMetadataChangeStatus,
     rsoMaxTotalHeaderLength :: Maybe Int,
     rsoTriggersErrorLogLevelStatus :: Maybe Server.Types.TriggersErrorLogLevelStatus,
+    rsoRedactEventTriggerLogs :: Maybe Server.Types.RedactEventTriggerLogsStatus,
+    rsoRedactScheduledTriggerLogs :: Maybe Server.Types.RedactScheduledTriggerLogsStatus,
+    rsoRedactActionHandlerLogs :: Maybe Server.Types.RedactActionHandlerLogsStatus,
     rsoAsyncActionsFetchBatchSize :: Maybe Int,
     rsoPersistedQueries :: Maybe Server.Types.PersistedQueriesState,
     rsoPersistedQueriesTtl :: Maybe Int,
@@ -340,7 +350,10 @@ data ServeOptionsRaw impl = ServeOptionsRaw
     rsoTraceQueryStatus :: Maybe Server.Types.TraceQueryStatus,
     rsoDisableNativeQueryValidation :: NativeQuery.Validation.DisableNativeQueryValidation,
     rsoPreserve401Errors :: Preserve401ErrorsStatus,
-    rsoServerTimeout :: Maybe (Refined NonNegative Int)
+    rsoServerTimeout :: Maybe (Refined NonNegative Int),
+    rsoLogMaskedVariables :: Maybe (HashSet Text),
+    rsoRelayMode :: RelayModeStatus,
+    rsoRemoteSchemaHealingInterval :: Maybe OptionalInterval
   }
 
 deriving stock instance (Show (Logging.EngineLogType impl)) => Show (ServeOptionsRaw impl)
@@ -388,6 +401,11 @@ isWebSocketCompressionEnabled = \case
   WebSockets.PermessageDeflateCompression _ -> True
   WebSockets.NoCompression -> False
 
+enabledWebSocketCompressionOptions :: WebSockets.CompressionOptions
+enabledWebSocketCompressionOptions =
+  WebSockets.PermessageDeflateCompression
+    (WebSockets.defaultPermessageDeflate {WebSockets.pdCompressionLevel = 3})
+
 -- | A representation of whether or not to enable the GraphQL Query AllowList.
 --
 -- See: https://hasura.io/docs/latest/security/allow-list/#enable-allow-list
@@ -429,6 +447,25 @@ instance FromJSON DevModeStatus where
 
 instance ToJSON DevModeStatus where
   toJSON = J.toJSON . isDevModeEnabled
+
+-- | Whether or not to enable the Relay API endpoints (@/v1/relay@, @/v1beta1/relay@).
+data RelayModeStatus = RelayModeEnabled | RelayModeDisabled
+  deriving stock (Show, Eq, Ord, Generic)
+
+instance NFData RelayModeStatus
+
+instance Hashable RelayModeStatus
+
+isRelayEnabled :: RelayModeStatus -> Bool
+isRelayEnabled = \case
+  RelayModeEnabled -> True
+  RelayModeDisabled -> False
+
+instance FromJSON RelayModeStatus where
+  parseJSON = fmap (bool RelayModeDisabled RelayModeEnabled) . J.parseJSON
+
+instance ToJSON RelayModeStatus where
+  toJSON = J.toJSON . isRelayEnabled
 
 -- | A representation of whether or not to enable telemetry that is isomorphic to 'Bool'.
 data TelemetryStatus = TelemetryEnabled | TelemetryDisabled
@@ -620,6 +657,7 @@ data ServeOptions impl = ServeOptions
     soUnAuthRole :: Maybe RoleName,
     soCorsConfig :: Cors.CorsConfig,
     soConsoleStatus :: ConsoleStatus,
+    soDisableAdminSecret :: Bool,
     soConsoleAssetsDir :: Maybe Text,
     soConsoleSentryDsn :: Maybe Text,
     soEnableTelemetry :: TelemetryStatus,
@@ -649,7 +687,9 @@ data ServeOptions impl = ServeOptions
     soAdminInternalErrors :: AdminInternalErrorsStatus,
     soGracefulShutdownTimeout :: Refined NonNegative Seconds,
     soWebSocketConnectionInitTimeout :: WSConnectionInitTimeout,
+    soWebSocketQueueSize :: Refined Positive Int,
     soEventingMode :: Server.Types.EventingMode,
+    soEventProcessingMode :: Server.Types.EventProcessingMode,
     -- | See note '$readOnlyMode'
     soReadOnlyMode :: Server.Types.ReadOnlyMode,
     soEnableMetadataQueryLogging :: Server.Logging.MetadataQueryLoggingMode,
@@ -661,6 +701,9 @@ data ServeOptions impl = ServeOptions
     soCloseWebsocketsOnMetadataChangeStatus :: Server.Types.CloseWebsocketsOnMetadataChangeStatus,
     soMaxTotalHeaderLength :: Int,
     soTriggersErrorLogLevelStatus :: Server.Types.TriggersErrorLogLevelStatus,
+    soRedactEventTriggerLogs :: Server.Types.RedactEventTriggerLogsStatus,
+    soRedactScheduledTriggerLogs :: Server.Types.RedactScheduledTriggerLogsStatus,
+    soRedactActionHandlerLogs :: Server.Types.RedactActionHandlerLogsStatus,
     soAsyncActionsFetchBatchSize :: Int,
     soPersistedQueries :: Server.Types.PersistedQueriesState,
     soPersistedQueriesTtl :: Int,
@@ -669,7 +712,10 @@ data ServeOptions impl = ServeOptions
     soTraceQueryStatus :: Server.Types.TraceQueryStatus,
     soDisableNativeQueryValidation :: NativeQuery.Validation.DisableNativeQueryValidation,
     soPreserve401Errors :: Preserve401ErrorsStatus,
-    soServerTimeout :: Refined NonNegative Int
+    soServerTimeout :: Refined NonNegative Int,
+    soLogMaskedVariables :: HashSet Text,
+    soRelayMode :: RelayModeStatus,
+    soRemoteSchemaHealingInterval :: OptionalInterval
   }
 
 -- | 'ResponseInternalErrorsConfig' represents the encoding of the

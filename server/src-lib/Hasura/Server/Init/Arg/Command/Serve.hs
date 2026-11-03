@@ -26,6 +26,7 @@ module Hasura.Server.Init.Arg.Command.Serve
     corsDomainOption,
     disableCorsOption,
     enableConsoleOption,
+    disableAdminSecretOption,
     preserve401ErrorsOption,
     consoleAssetsDirOption,
     consoleSentryDsnOption,
@@ -54,11 +55,14 @@ module Hasura.Server.Init.Arg.Command.Serve
     webSocketKeepAliveOption,
     inferFunctionPermsOption,
     enableMaintenanceModeOption,
+    disableEventingOption,
+    disableEventProcessingOption,
     schemaPollIntervalOption,
     experimentalFeaturesOption,
     eventsFetchBatchSizeOption,
     gracefulShutdownOption,
     webSocketConnectionInitTimeoutOption,
+    webSocketQueueSizeOption,
     enableMetadataQueryLoggingOption,
     httpLogQueryOnlyOnErrorOption,
     defaultNamingConventionOption,
@@ -67,6 +71,9 @@ module Hasura.Server.Init.Arg.Command.Serve
     metadataDefaultsOption,
     apolloFederationStatusOption,
     triggersErrorLogLevelStatusOption,
+    redactEventTriggerLogsOption,
+    redactScheduledTriggerLogsOption,
+    redactActionHandlerLogsOption,
     closeWebsocketsOnMetadataChangeOption,
     maxTotalHeaderLengthOption,
     asyncActionsFetchBatchSizeOption,
@@ -76,6 +83,9 @@ module Hasura.Server.Init.Arg.Command.Serve
     configuredHeaderPrecedenceOption,
     traceQueryStatusOption,
     serverTimeoutOption,
+    logMaskedVariablesOption,
+    enableRelayOption,
+    remoteSchemaHealingIntervalOption,
 
     -- * Pretty Printer
     serveCmdFooter,
@@ -129,6 +139,7 @@ serveCommandParser =
     <*> parseUnAuthRole
     <*> parseCorsConfig
     <*> parseEnableConsole
+    <*> parseDisableAdminSecret
     <*> parseConsoleAssetsDir
     <*> parseConsoleSentryDsn
     <*> parseEnableTelemetry
@@ -156,11 +167,14 @@ serveCommandParser =
     <*> parseWebSocketKeepAlive
     <*> parseInferFunctionPerms
     <*> parseEnableMaintenanceMode
+    <*> parseDisableEventing
+    <*> parseDisableEventProcessing
     <*> parseSchemaPollInterval
     <*> parseExperimentalFeatures
     <*> parseEventsFetchBatchSize
     <*> parseGracefulShutdownTimeout
     <*> parseWebSocketConnectionInitTimeout
+    <*> parseWebSocketQueueSize
     <*> parseEnableMetadataQueryLogging
     <*> parseHttpLogQueryOnlyOnError
     <*> parseDefaultNamingConvention
@@ -170,6 +184,9 @@ serveCommandParser =
     <*> parseEnableCloseWebsocketsOnMetadataChange
     <*> parseMaxTotalHeaderLength
     <*> parseTriggersErrorLoglevelStatus
+    <*> parseRedactEventTriggerLogs
+    <*> parseRedactScheduledTriggerLogs
+    <*> parseRedactActionHandlerLogs
     <*> parseAsyncActionsFetchBatchSize
     <*> parsePersistedQueries
     <*> parsePersistedQueriesTtl
@@ -179,6 +196,9 @@ serveCommandParser =
     <*> parseDisableNativeQueryValidation
     <*> parsePreserve401Errors
     <*> parseServerTimeout
+    <*> parseLogMaskedVariables
+    <*> parseEnableRelay
+    <*> parseRemoteSchemaHealingInterval
 
 --------------------------------------------------------------------------------
 -- Serve Options
@@ -488,6 +508,7 @@ unAuthRoleOption =
       Config._helpMessage =
         "Unauthorized role, used when admin-secret is not sent in admin-secret only mode "
           ++ "or \"Authorization\" header is absent in JWT mode"
+          ++ " or admin-secret authentication is disabled without an auth hook or JWT"
     }
 
 parseCorsConfig :: Opt.Parser (Maybe Cors.CorsConfig)
@@ -543,6 +564,21 @@ enableConsoleOption =
     { Config._default = Config.ConsoleDisabled,
       Config._envVar = "HASURA_GRAPHQL_ENABLE_CONSOLE",
       Config._helpMessage = "Enable API Console (default: false)"
+    }
+
+parseDisableAdminSecret :: Opt.Parser Bool
+parseDisableAdminSecret =
+  Opt.switch
+    ( Opt.long "disable-admin-secret"
+        <> Opt.help (Config._helpMessage disableAdminSecretOption)
+    )
+
+disableAdminSecretOption :: Config.Option Bool
+disableAdminSecretOption =
+  Config.Option
+    { Config._default = False,
+      Config._envVar = "HASURA_GRAPHQL_DISABLE_ADMIN_SECRET",
+      Config._helpMessage = "Disable the admin authentication via the x-hasura-admin-secret header (default: false)"
     }
 
 parseConsoleAssetsDir :: Opt.Parser (Maybe Text)
@@ -897,6 +933,22 @@ graphqlDevModeOption =
       Config._helpMessage = "Set dev mode for GraphQL requests; include 'internal' key in the errors extensions (if required) of the response"
     }
 
+parseEnableRelay :: Opt.Parser Config.RelayModeStatus
+parseEnableRelay =
+  bool Config.RelayModeDisabled Config.RelayModeEnabled
+    <$> Opt.switch
+      ( Opt.long "enable-relay"
+          <> Opt.help (Config._helpMessage enableRelayOption)
+      )
+
+enableRelayOption :: Config.Option Config.RelayModeStatus
+enableRelayOption =
+  Config.Option
+    { Config._default = Config.RelayModeEnabled,
+      Config._envVar = "HASURA_GRAPHQL_ENABLE_RELAY",
+      Config._helpMessage = "Enable the Relay API endpoint (/v1/relay and /v1beta1/relay). When disabled, requests to the relay endpoint return an error (default: true)"
+    }
+
 parseGraphqlAdminInternalErrors :: Opt.Parser (Maybe Config.AdminInternalErrorsStatus)
 parseGraphqlAdminInternalErrors =
   Opt.optional
@@ -990,7 +1042,7 @@ enableRemoteSchemaPermsOption =
 
 parseWebSocketCompression :: Opt.Parser WebSockets.CompressionOptions
 parseWebSocketCompression =
-  bool WebSockets.NoCompression (WebSockets.PermessageDeflateCompression WebSockets.defaultPermessageDeflate)
+  bool WebSockets.NoCompression Config.enabledWebSocketCompressionOptions
     <$> Opt.switch
       ( Opt.long "websocket-compression"
           <> Opt.help (Config._helpMessage webSocketCompressionOption)
@@ -1053,6 +1105,50 @@ enableMaintenanceModeOption =
     { Config._default = Types.MaintenanceModeDisabled,
       Config._envVar = "HASURA_GRAPHQL_ENABLE_MAINTENANCE_MODE",
       Config._helpMessage = "Flag to enable maintenance mode in the graphql-engine"
+    }
+
+parseDisableEventing :: Opt.Parser Types.EventingMode
+parseDisableEventing =
+  fmap (bool Types.EventingEnabled Types.EventingDisabled)
+    $ Opt.switch
+      ( Opt.long "disable-eventing"
+          <> Opt.help (Config._helpMessage disableEventingOption)
+      )
+
+disableEventingOption :: Config.Option Types.EventingMode
+disableEventingOption =
+  Config.Option
+    { Config._default = Types.EventingEnabled,
+      Config._envVar = "HASURA_GRAPHQL_DISABLE_EVENTING",
+      Config._helpMessage =
+        "Disable the eventing subsystem entirely: event triggers, "
+          <> "cron triggers, scheduled events, and async actions. "
+          <> "Useful for migration jobs and other transient instances "
+          <> "where these background pollers compete with the workload "
+          <> "for database resources."
+    }
+
+parseDisableEventProcessing :: Opt.Parser Types.EventProcessingMode
+parseDisableEventProcessing =
+  fmap (bool Types.EventProcessingEnabled Types.EventProcessingDisabled)
+    $ Opt.switch
+      ( Opt.long "disable-event-processing"
+          <> Opt.help (Config._helpMessage disableEventProcessingOption)
+      )
+
+disableEventProcessingOption :: Config.Option Types.EventProcessingMode
+disableEventProcessingOption =
+  Config.Option
+    { Config._default = Types.EventProcessingEnabled,
+      Config._envVar = "HASURA_GRAPHQL_DISABLE_EVENT_PROCESSING",
+      Config._helpMessage =
+        "Stop the eventing background pollers (event triggers, cron triggers, "
+          <> "scheduled events and async actions) from running, so the instance "
+          <> "delivers/sends no events. Unlike HASURA_GRAPHQL_DISABLE_EVENTING this "
+          <> "leaves the eventing subsystem otherwise intact: source catalog "
+          <> "migrations still run, so the eventing catalog tables are created. "
+          <> "Useful for migration jobs that must set up a fresh database without "
+          <> "sending any events while doing so."
     }
 
 parseSchemaPollInterval :: Opt.Parser (Maybe Config.OptionalInterval)
@@ -1154,6 +1250,24 @@ webSocketConnectionInitTimeoutOption =
     { Config._default = Config.WSConnectionInitTimeout $$(refineTH 3),
       Config._envVar = "HASURA_GRAPHQL_WEBSOCKET_CONNECTION_INIT_TIMEOUT", -- FIXME?: maybe a better name
       Config._helpMessage = "Control websocket connection_init timeout (default 3 seconds)"
+    }
+
+parseWebSocketQueueSize :: Opt.Parser (Maybe (Refined Positive Int))
+parseWebSocketQueueSize =
+  Opt.optional
+    $ Opt.option
+      (Opt.eitherReader Env.fromEnv)
+      ( Opt.long "websocket-queue-size"
+          <> Opt.metavar (Config._envVar webSocketQueueSizeOption)
+          <> Opt.help (Config._helpMessage webSocketQueueSizeOption)
+      )
+
+webSocketQueueSizeOption :: Config.Option (Refined Positive Int)
+webSocketQueueSizeOption =
+  Config.Option
+    { Config._default = $$(refineTH @Positive @Int 300),
+      Config._envVar = "HASURA_GRAPHQL_WEBSOCKET_QUEUE_SIZE",
+      Config._helpMessage = "Max number of subscription-result/query-result messages buffered per WebSocket connection before the operation responsible is cancelled instead (default: 300; minimum: 1). Control messages (completions, errors, etc.) are never subject to this limit."
     }
 
 parseEnableMetadataQueryLogging :: Opt.Parser Server.Logging.MetadataQueryLoggingMode
@@ -1310,6 +1424,54 @@ parseTriggersErrorLoglevelStatus =
           <> Opt.help (Config._helpMessage triggersErrorLogLevelStatusOption)
       )
 
+redactEventTriggerLogsOption :: Config.Option (Types.RedactEventTriggerLogsStatus)
+redactEventTriggerLogsOption =
+  Config.Option
+    { Config._default = Types.RedactEventTriggerLogsDisabled,
+      Config._envVar = "HASURA_GRAPHQL_REDACT_EVENT_TRIGGER_LOGS",
+      Config._helpMessage = "Redact the request body, session variables and webhook response body from Event Trigger delivery logs (default: false)."
+    }
+
+parseRedactEventTriggerLogs :: Opt.Parser (Maybe Types.RedactEventTriggerLogsStatus)
+parseRedactEventTriggerLogs =
+  (bool Nothing (Just Types.RedactEventTriggerLogsEnabled))
+    <$> Opt.switch
+      ( Opt.long "redact-event-trigger-logs"
+          <> Opt.help (Config._helpMessage redactEventTriggerLogsOption)
+      )
+
+redactScheduledTriggerLogsOption :: Config.Option (Types.RedactScheduledTriggerLogsStatus)
+redactScheduledTriggerLogsOption =
+  Config.Option
+    { Config._default = Types.RedactScheduledTriggerLogsDisabled,
+      Config._envVar = "HASURA_GRAPHQL_REDACT_SCHEDULED_TRIGGER_LOGS",
+      Config._helpMessage = "Redact the request body, session variables and webhook response body from Scheduled/Cron Trigger delivery logs (default: false)."
+    }
+
+parseRedactScheduledTriggerLogs :: Opt.Parser (Maybe Types.RedactScheduledTriggerLogsStatus)
+parseRedactScheduledTriggerLogs =
+  (bool Nothing (Just Types.RedactScheduledTriggerLogsEnabled))
+    <$> Opt.switch
+      ( Opt.long "redact-scheduled-trigger-logs"
+          <> Opt.help (Config._helpMessage redactScheduledTriggerLogsOption)
+      )
+
+redactActionHandlerLogsOption :: Config.Option (Types.RedactActionHandlerLogsStatus)
+redactActionHandlerLogsOption =
+  Config.Option
+    { Config._default = Types.RedactActionHandlerLogsDisabled,
+      Config._envVar = "HASURA_GRAPHQL_REDACT_ACTION_HANDLER_LOGS",
+      Config._helpMessage = "Redact the request body from Action handler logs (action-handler-log) (default: false)."
+    }
+
+parseRedactActionHandlerLogs :: Opt.Parser (Maybe Types.RedactActionHandlerLogsStatus)
+parseRedactActionHandlerLogs =
+  (bool Nothing (Just Types.RedactActionHandlerLogsEnabled))
+    <$> Opt.switch
+      ( Opt.long "redact-action-handler-logs"
+          <> Opt.help (Config._helpMessage redactActionHandlerLogsOption)
+      )
+
 asyncActionsFetchBatchSizeOption :: Config.Option Int
 asyncActionsFetchBatchSizeOption =
   Config.Option
@@ -1448,6 +1610,49 @@ parseServerTimeout =
           <> Opt.help (Config._helpMessage serverTimeoutOption)
       )
 
+parseLogMaskedVariables :: Opt.Parser (Maybe (HashSet Text))
+parseLogMaskedVariables =
+  Opt.optional
+    $ Opt.option
+      (Opt.eitherReader Env.fromEnv)
+      ( Opt.long "log-masked-variables"
+          <> Opt.help (Config._helpMessage logMaskedVariablesOption)
+      )
+
+logMaskedVariablesOption :: Config.Option (HashSet Text)
+logMaskedVariablesOption =
+  Config.Option
+    { Config._default = HashSet.empty,
+      Config._envVar = "HASURA_GRAPHQL_LOG_MASKED_VARIABLES",
+      Config._helpMessage =
+        "Comma separated list of variable names to mask in query logs "
+          <> "(default: none). When set, the values of these variables will be "
+          <> "replaced with \"[MASKED]\" in query-log output."
+    }
+
+parseRemoteSchemaHealingInterval :: Opt.Parser (Maybe Config.OptionalInterval)
+parseRemoteSchemaHealingInterval =
+  Opt.optional
+    $ Opt.option
+      (Opt.eitherReader Env.fromEnv)
+      ( Opt.long "remote-schema-healing-interval"
+          <> Opt.metavar (Config._envVar remoteSchemaHealingIntervalOption)
+          <> Opt.help (Config._helpMessage remoteSchemaHealingIntervalOption)
+      )
+
+remoteSchemaHealingIntervalOption :: Config.Option Config.OptionalInterval
+remoteSchemaHealingIntervalOption =
+  Config.Option
+    { -- 5000 Milliseconds or 5 Seconds
+      Config._default = Config.Interval $$(refineTH 5000),
+      Config._envVar = "HASURA_GRAPHQL_REMOTE_SCHEMA_HEALING_INTERVAL",
+      Config._helpMessage =
+        "Interval in milliseconds at which to check for remote schemas that are inconsistent "
+          <> "(e.g. because they were unreachable at startup) and retry introspecting them. "
+          <> "Each failing remote schema is retried with exponential backoff starting at "
+          <> "this interval, up to a maximum of 2 minutes - Default 5000 (5s) - Set to 0 to disable"
+    }
+
 --------------------------------------------------------------------------------
 -- Pretty Printer
 
@@ -1538,11 +1743,14 @@ serveCmdFooter =
         Config.optionPP webSocketKeepAliveOption,
         Config.optionPP inferFunctionPermsOption,
         Config.optionPP enableMaintenanceModeOption,
+        Config.optionPP disableEventingOption,
+        Config.optionPP disableEventProcessingOption,
         Config.optionPP schemaPollIntervalOption,
         Config.optionPP experimentalFeaturesOption,
         Config.optionPP eventsFetchBatchSizeOption,
         Config.optionPP gracefulShutdownOption,
         Config.optionPP webSocketConnectionInitTimeoutOption,
+        Config.optionPP webSocketQueueSizeOption,
         Config.optionPP enableMetadataQueryLoggingOption,
         Config.optionPP defaultNamingConventionOption,
         Config.optionPP metadataDBExtensionsSchemaOption,
@@ -1551,11 +1759,17 @@ serveCmdFooter =
         Config.optionPP maxTotalHeaderLengthOption,
         Config.optionPP remoteNullForwardingPolicyOption,
         Config.optionPP triggersErrorLogLevelStatusOption,
+        Config.optionPP redactEventTriggerLogsOption,
+        Config.optionPP redactScheduledTriggerLogsOption,
+        Config.optionPP redactActionHandlerLogsOption,
         Config.optionPP asyncActionsFetchBatchSizeOption,
         Config.optionPP persistedQueriesOption,
         Config.optionPP persistedQueriesTtlOption,
         Config.optionPP configuredHeaderPrecedenceOption,
         Config.optionPP preserve401ErrorsOption,
-        Config.optionPP serverTimeoutOption
+        Config.optionPP serverTimeoutOption,
+        Config.optionPP logMaskedVariablesOption,
+        Config.optionPP enableRelayOption,
+        Config.optionPP remoteSchemaHealingIntervalOption
       ]
     eventEnvs = [Config.optionPP graphqlEventsHttpPoolSizeOption, Config.optionPP graphqlEventsFetchIntervalOption]

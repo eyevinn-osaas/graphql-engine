@@ -1,12 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Button } from '../../../../new-components/Button';
-import { useConsoleForm } from '../../../../new-components/Form';
-import { Tabs } from '../../../../new-components/Tabs';
-import { hasuraToast } from '../../../../new-components/Toasts';
-import { useMetadata } from '../../../hasura-metadata-api';
-import { Source } from '../../../hasura-metadata-types/source/source';
+import { Flex, Heading } from '@radix-ui/themes';
+import {
+  useConsoleForm,
+  Tabs,
+  Button,
+  showErrorNotification,
+} from '@hasura/shared/ui';
+import { useMetadata } from '@hasura/metadata/api';
+import { PostgresSource, Source } from '@hasura/shared/types';
 import { useManageDatabaseConnection } from '../../hooks/useManageDatabaseConnection';
-import { DisplayToastErrorMessage } from '../Common/DisplayToastErrorMessage';
 import { LimitedFeatureWrapper } from '../LimitedFeatureWrapper/LimitedFeatureWrapper';
 import { ConnectPostgresForm } from './parts/ConnectPostgresForm';
 import { DynamicDBRouting } from './parts/DynamicDBRouting';
@@ -21,7 +23,7 @@ type PostgresLikeSource = Extract<
 >;
 
 const isPostgresLikeSource = (
-  source: Source | undefined
+  source: Source | undefined,
 ): source is PostgresLikeSource => {
   return (
     source?.kind === 'postgres' ||
@@ -44,38 +46,22 @@ export const ConnectPostgresWidget = (props: ConnectPostgresWidgetProps) => {
 
   const isEditMode = !!dataSourceName;
 
-  const { data: metadataSource } = useMetadata(m =>
-    m.metadata.sources.find(source => source.name === dataSourceName)
+  const { data: metadataSource } = useMetadata((m) =>
+    m.metadata.sources.find((source) => source.name === dataSourceName),
   );
 
-  const { createConnection, editConnection, isLoading } =
-    useManageDatabaseConnection({
-      onSuccess: () => {
-        hasuraToast({
-          type: 'success',
-          title: isEditMode
-            ? 'Database updated successfully!'
-            : 'Database added successfully!',
-        });
-      },
-      onError: err => {
-        hasuraToast({
-          type: 'error',
-          title: err.name,
-          children: <DisplayToastErrorMessage message={err.message} />,
-        });
-      },
-    });
+  const { createConnection, editConnection, isPending } =
+    useManageDatabaseConnection({});
 
   const handleSubmit = (formValues: PostgresConnectionSchema) => {
     const payload = generatePostgresRequestPayload({
       driver: overrideDriver ?? 'postgres',
       values: formValues,
       connectionTemplate: isPostgresLikeSource(metadataSource)
-        ? metadataSource.configuration.connection_template
+        ? (metadataSource as PostgresSource).configuration?.connection_template
         : undefined,
       connectionSet: isPostgresLikeSource(metadataSource)
-        ? metadataSource.configuration.connection_set
+        ? (metadataSource as PostgresSource).configuration?.connection_set
         : undefined,
     });
 
@@ -97,10 +83,10 @@ export const ConnectPostgresWidget = (props: ConnectPostgresWidgetProps) => {
     try {
       reset(getDefaultValues(metadataSource));
     } catch (err) {
-      hasuraToast({
-        type: 'error',
+      showErrorNotification({
         title:
           'Error while retriving database. Please check if the database is of type postgres',
+        error: err,
       });
     }
   }, [metadataSource, reset]);
@@ -115,7 +101,7 @@ export const ConnectPostgresWidget = (props: ConnectPostgresWidgetProps) => {
             value: 'dynamicDBRouting',
             label: 'Dynamic Routing',
             content: (
-              <div className="mt-sm">
+              <div className="mt-2">
                 <LimitedFeatureWrapper
                   id="dynamic-db-routing"
                   title="Dynamic Routing for Databases"
@@ -131,33 +117,33 @@ export const ConnectPostgresWidget = (props: ConnectPostgresWidgetProps) => {
 
   return (
     <>
-      <div className="text-xl text-gray-600 font-semibold">
+      <Heading size="5">
         {isEditMode
           ? `Edit ${overrideDisplayName ?? 'Postgres'} Connection`
           : `Connect ${overrideDisplayName ?? 'Postgres'} Database`}
-      </div>
-      <div className="my-3" />
+      </Heading>
+      <div className="my-4" />
       <Tabs
         value={tab}
-        onValueChange={value => setTab(value)}
+        onValueChange={(value) => setTab(value)}
         items={[
           {
             value: 'connectionDetails',
             label: 'Connection Details',
             content: (
-              <div className="mt-sm">
+              <div className="mt-2">
                 <Form onSubmit={handleSubmit}>
                   <ConnectPostgresForm hiddenOptions={hiddenOptions} />
-                  <div className="flex justify-end mt-sm">
+                  <Flex justify="end" className="mt-2">
                     <Button
                       type="submit"
                       mode="primary"
-                      isLoading={isLoading}
+                      loading={isPending}
                       loadingText="Saving"
                     >
                       {isEditMode ? 'Update Connection' : 'Connect Database'}
                     </Button>
-                  </div>
+                  </Flex>
                 </Form>
               </div>
             ),
