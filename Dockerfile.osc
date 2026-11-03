@@ -1,4 +1,4 @@
-FROM hasura/graphql-engine:v2.48.13
+FROM hasura/graphql-engine:v2.51.3
 
 EXPOSE 8080
 
